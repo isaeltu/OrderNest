@@ -1,0 +1,1297 @@
+{
+  "name": "RestoPOS - Bot de pedidos por WhatsApp",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "whatsapp-bot",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1111111-0000-4000-8000-000000000001",
+      "name": "Webhook Meta (verificacion GET)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1600,
+        -200
+      ],
+      "webhookId": "whatsapp-bot-verify",
+      "notes": "Meta llama este endpoint por GET una sola vez al configurar el webhook, para verificar que el servidor es nuestro. Trae hub.mode, hub.verify_token y hub.challenge como query params."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "b1111111-0000-4000-8000-000000000002",
+              "leftValue": "={{$json.query[\"hub.mode\"]}}",
+              "rightValue": "subscribe",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "b1111111-0000-4000-8000-000000000003",
+              "leftValue": "={{$json.query[\"hub.verify_token\"]}}",
+              "rightValue": "f76036e2d6c4fcc35375d7f9745fed96",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1111111-0000-4000-8000-000000000004",
+      "name": "Token valido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1380,
+        -200
+      ],
+      "notes": "Compara hub.verify_token recibido contra la variable de entorno META_VERIFY_TOKEN (la que el usuario inventa y pone tambien en la app de Meta). Si coincide, se acepta la suscripcion del webhook."
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{$json.query[\"hub.challenge\"]}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000005",
+      "name": "Responder challenge (200)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -1160,
+        -300
+      ],
+      "notes": "Responde el hub.challenge como texto plano con status 200. Esto confirma a Meta que el endpoint es valido y activa el webhook."
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Token de verificacion invalido",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000006",
+      "name": "Responder 403 (token invalido)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -1160,
+        -100
+      ],
+      "notes": "Si el verify_token no coincide con META_VERIFY_TOKEN, se rechaza con 403 segun el contrato de Meta Cloud API."
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-bot",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1111111-0000-4000-8000-000000000007",
+      "name": "Webhook Meta (mensajes POST)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1600,
+        100
+      ],
+      "webhookId": "whatsapp-bot-messages",
+      "notes": "Meta envia aqui cada mensaje nuevo o evento de status (entregado/leido) del numero de WhatsApp del negocio, en la misma ruta /whatsapp-bot pero por POST."
+    },
+    {
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000008",
+      "name": "Responder 200 vacio (ack inmediato)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -1380,
+        100
+      ],
+      "notes": "Meta solo necesita un 200 rapido para no reintentar el envio. La respuesta real al cliente se manda luego por la API de WhatsApp (no por el response del webhook), asi que aqui simplemente confirmamos recepcion."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extrae el primer mensaje de texto del payload de Meta, si existe.\n// Eventos de status (delivered/read) o mensajes que no son de texto (audio, imagen, etc.)\n// no traen messages[0].type === 'text' y deben ignorarse en este flujo v1.\nconst body = $input.first().json.body ?? $input.first().json;\n\nconst entry = body?.entry?.[0];\nconst change = entry?.changes?.[0];\nconst value = change?.value;\nconst message = value?.messages?.[0];\n\nconst phoneNumberId = value?.metadata?.phone_number_id ?? null;\nconst isTextMessage = Boolean(message && message.type === 'text' && message.text?.body);\n\nreturn [\n  {\n    json: {\n      isTextMessage,\n      phoneNumberId,\n      customerPhone: message?.from ?? null,\n      messageText: isTextMessage ? message.text.body : null,\n      rawValue: value ?? null\n    }\n  }\n];\n"
+      },
+      "id": "a1111111-0000-4000-8000-000000000009",
+      "name": "Extraer mensaje de texto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1160,
+        100
+      ],
+      "notes": "Parsea el body de Meta y deja en json plano: phoneNumberId, customerPhone y messageText. Marca isTextMessage=false para eventos de status o mensajes no soportados (audio/imagen/sticker), que se descartan en el siguiente nodo."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "b1111111-0000-4000-8000-000000000010",
+              "leftValue": "={{$json.isTextMessage}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1111111-0000-4000-8000-000000000011",
+      "name": "Es mensaje de texto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -940,
+        100
+      ],
+      "notes": "Si no es un mensaje de texto valido (es un evento de status, o un tipo de mensaje no soportado), el flujo termina aqui sin hacer nada mas."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lxurfpnlvmrvarwbzygl.supabase.co/rest/v1/rpc/bot_get_menu",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "sb_publishable_77PigSkBunzibgJZ08L-LA_aM6Xwjm_"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer sb_publishable_77PigSkBunzibgJZ08L-LA_aM6Xwjm_"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"p_phone_number_id\": $json.phoneNumberId } }}",
+        "options": {}
+      },
+      "id": "a1111111-0000-4000-8000-000000000012",
+      "name": "Supabase: bot_get_menu",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -720,
+        100
+      ],
+      "notes": "Resuelve el restaurante (nombre, direccion, extraPrompt, notificationEmail) y su catalogo completo (categorias + productos con id/precio) a partir del phone_number_id del webhook de Meta. Devuelve null si ese numero no tiene el bot activo."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "b1111111-0000-4000-8000-000000000013",
+              "leftValue": "={{$json.restaurant}}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1111111-0000-4000-8000-000000000014",
+      "name": "Bot activo para este numero?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -500,
+        100
+      ],
+      "notes": "bot_get_menu devuelve null (HTTP 200, body null) si el phone_number_id no tiene el bot activo en ningun restaurante. En ese caso el flujo debe terminar sin responder nada al remitente -- nunca inventar un restaurante."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combina el resultado de bot_get_menu con los datos del mensaje original\n// (telefono del cliente y texto) en un solo objeto para los nodos siguientes.\nconst menu = $input.first().json;\nconst original = $('Extraer mensaje de texto').first().json;\n\nreturn [\n  {\n    json: {\n      restaurant: menu.restaurant,\n      categories: menu.categories,\n      products: menu.products,\n      phoneNumberId: original.phoneNumberId,\n      customerPhone: original.customerPhone,\n      messageText: original.messageText\n    }\n  }\n];\n"
+      },
+      "id": "a1111111-0000-4000-8000-000000000015",
+      "name": "Combinar menu + mensaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -280,
+        20
+      ],
+      "notes": "Une la respuesta de bot_get_menu con el telefono y texto del cliente para tener todo en un solo item antes de armar el contexto de conversacion."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Memoria de conversacion MUY simple, en memoria del proceso de n8n (workflowStaticData),\n// keyeada por numero de telefono del cliente. Limitacion conocida (ver README):\n// se pierde si n8n se reinicia o si corre en mas de una instancia/worker.\nconst staticData = $getWorkflowStaticData('global');\nstaticData.conversations = staticData.conversations || {};\nstaticData.customerProfiles = staticData.customerProfiles || {};\n\nconst input = $input.first().json;\nconst phone = input.customerPhone;\nconst history = staticData.conversations[phone] || [];\n\n// Guarda el mensaje entrante del cliente en el historial antes de llamar al LLM.\nhistory.push({ role: 'customer', text: input.messageText, at: new Date().toISOString() });\n// Conserva solo los ultimos 12 turnos para no inflar el prompt indefinidamente.\nstaticData.conversations[phone] = history.slice(-12);\n\nconst attempts = staticData.failedAttempts || {};\nconst failedAttempts = attempts[phone] || 0;\n// Nombre/correo ya capturados en turnos anteriores de esta misma conversacion.\nconst profile = staticData.customerProfiles[phone] || { name: '', email: '' };\n\nreturn [\n  {\n    json: {\n      ...input,\n      conversationHistory: staticData.conversations[phone],\n      failedAttempts,\n      customerName: profile.name,\n      customerEmail: profile.email\n    }\n  }\n];\n"
+      },
+      "id": "a1111111-0000-4000-8000-000000000016",
+      "name": "Memoria por telefono (leer)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -60,
+        20
+      ],
+      "notes": "Lee/actualiza el historial de conversacion y el contador de intentos fallidos del numero de telefono, usando workflowStaticData de n8n. Es memoria solo en RAM del proceso n8n (no persiste a disco ni sobrevive un reinicio) -- ver limitaciones en README."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construye el system prompt dinamico para el LLM: datos del negocio, extraPrompt\n// del admin, catalogo completo serializado, historial de conversacion reciente,\n// fecha/hora actual, datos del cliente ya conocidos, y las reglas estrictas de\n// formato de salida JSON.\nconst data = $input.first().json;\nconst restaurant = data.restaurant;\nconst categories = data.categories || [];\nconst products = data.products || [];\n\nconst catalogLines = categories.map((cat) => {\n  const items = products\n    .filter((p) => p.categoryId === cat.id)\n    .map((p) => `    - id: ${p.id} | ${p.name} | RD$ ${p.price}${p.description ? ' | ' + p.description : ''}`)\n    .join('\\n');\n  return `  ${cat.name}:\\n${items || '    (sin productos disponibles)'}`;\n}).join('\\n');\n\nconst historyText = (data.conversationHistory || [])\n  .map((turn) => `${turn.role === 'customer' ? 'Cliente' : 'Bot'}: ${turn.text}`)\n  .join('\\n');\n\n// El LLM no tiene reloj propio: hay que decirle la fecha/hora real para que pueda\n// aplicar un horario de atencion que el admin describa en texto libre en extraPrompt.\nconst now = new Date();\nconst nowText = now.toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo', dateStyle: 'full', timeStyle: 'short' });\n\nconst systemPrompt = `Eres el asistente de pedidos por WhatsApp del restaurante \"${restaurant.name}\".\nDireccion: ${restaurant.address || 'no especificada'}\nTelefono: ${restaurant.phone || 'no especificado'}\nInstrucciones del negocio (horarios, promociones, tono, cuentas de pago, etc.): ${restaurant.extraPrompt || '(sin instrucciones adicionales)'}\n\nFECHA Y HORA ACTUAL (zona horaria Republica Dominicana): ${nowText}\n\nDATOS DEL CLIENTE YA CONOCIDOS EN ESTA CONVERSACION:\nNombre: ${data.customerName || '(desconocido, falta pedirlo)'}\nCorreo: ${data.customerEmail || '(desconocido, falta pedirlo)'}\n\nCATALOGO DISPONIBLE (unicos productos que existen, con su id real -- nunca inventes productos, precios o ids fuera de esta lista):\n${catalogLines}\n\nHISTORIAL RECIENTE DE LA CONVERSACION CON ESTE CLIENTE:\n${historyText || '(primer mensaje de esta conversacion)'}\n\nREGLAS:\n1. Identifica si el cliente quiere hacer un pedido, esta haciendo una pregunta (horarios, menu, direccion, etc.) o quiere hablar con una persona.\n2. Para resolver un pedido, mapea por nombre/parecido (fuzzy match) cada producto que menciona el cliente a un id real del catalogo. Nunca inventes un productId que no este en la lista.\n3. Si el cliente menciona un producto pero NO dice la cantidad, NO asumas cantidad 1: responde con intent \"chat\" preguntando la cantidad de ese producto especifico.\n4. Antes de poder usar intent \"order\" necesitas TODO esto: productos con cantidad clara, el nombre completo del cliente y su correo electronico. Si falta el nombre o el correo (revisa \"DATOS DEL CLIENTE\" arriba), usa intent \"chat\" y pidelo explicitamente -- nunca inventes un nombre o correo. En cuanto el cliente te de su nombre y/o correo, devuelvelos en los campos \"customerName\"/\"customerEmail\" de tu respuesta JSON, incluso si todavia faltan otros datos del pedido.\n5. Si las instrucciones del negocio arriba indican un horario de atencion, compara ese horario contra la FECHA Y HORA ACTUAL. Si el restaurante esta cerrado en este momento, usa intent \"chat\" y explica amablemente que esta cerrado e indica el horario en que puede ordenar -- no continues hacia \"order\" aunque el cliente ya haya dado todos los demas datos.\n6. Si tras un par de intentos no logras identificar que producto del catalogo quiere el cliente, o el cliente pide explicitamente hablar con una persona/agente/humano, usa intent \"handoff\" y explica el motivo en \"reason\" (usa uno de: no_entendido, cliente_pidio_humano, producto_no_encontrado).\n7. Si es solo una pregunta (bebidas disponibles, horario, direccion, metodos de pago, etc.), respondela directamente con la info que ya tienes arriba, usando intent \"chat\", sin necesidad de crear pedido ni handoff.\n8. \"replyText\" siempre debe tener el texto exacto que se le va a mandar al cliente por WhatsApp (en español, tono amable, conciso).\n9. Responde SIEMPRE y UNICAMENTE con un JSON valido, sin texto adicional antes o despues, exactamente con esta forma:\n{\"intent\": \"chat\" | \"order\" | \"handoff\", \"replyText\": \"string\", \"items\": [{\"productId\": \"uuid\", \"quantity\": 1, \"notes\": \"\"}], \"reason\": \"string\", \"customerName\": \"string\", \"customerEmail\": \"string\"}\nSi no aplica \"items\", \"reason\", \"customerName\" o \"customerEmail\", devuelvelos como arreglo vacio [] o string vacio \"\" segun corresponda, pero no omitas las claves.`;\n\nreturn [\n  {\n    json: {\n      ...data,\n      systemPrompt\n    }\n  }\n];\n"
+      },
+      "id": "a1111111-0000-4000-8000-000000000017",
+      "name": "Construir system prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        20
+      ],
+      "notes": "Serializa restaurante + extraPrompt + catalogo completo (con ids reales) + historial de conversacion + reglas estrictas de salida JSON en un solo system prompt dinamico para el LLM."
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-3-5-sonnet-20241022"
+        },
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000018",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        380,
+        220
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-credential-placeholder",
+          "name": "Anthropic account"
+        }
+      },
+      "notes": "Modelo de lenguaje usado por el AI Agent. Si el usuario prefiere OpenAI, este nodo se puede sustituir por 'OpenAI Chat Model' (mismo conector de entrada al AI Agent) -- ver README."
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{$json.messageText}}",
+        "options": {
+          "systemMessage": "={{$json.systemPrompt}}"
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000019",
+      "name": "AI Agent (interpreta pedido)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        380,
+        20
+      ],
+      "notes": "Recibe el system prompt dinamico (negocio + catalogo + historial + reglas) y el ultimo mensaje del cliente como input. Debe devolver el JSON con intent/replyText/items/reason segun las reglas del prompt."
+    },
+    {
+      "parameters": {
+        "jsCode": "// El AI Agent puede devolver el JSON envuelto en texto o con bloque ```json.\n// Este nodo extrae y parsea el JSON de forma defensiva; si falla el parseo,\n// trata el caso como 'no entendido' y fuerza un handoff en lugar de romper el flujo.\nconst agentOutput = $input.first().json.output ?? $input.first().json.text ?? '';\nconst previous = $('Construir system prompt').first().json;\n\nfunction extractJson(raw) {\n  const match = raw.match(/\\{[\\s\\S]*\\}/);\n  if (!match) return null;\n  try {\n    return JSON.parse(match[0]);\n  } catch {\n    return null;\n  }\n}\n\nconst parsed = extractJson(agentOutput);\n\nconst staticData = $getWorkflowStaticData('global');\nstaticData.failedAttempts = staticData.failedAttempts || {};\nstaticData.customerProfiles = staticData.customerProfiles || {};\nconst phone = previous.customerPhone;\n\nif (!parsed || !parsed.intent) {\n  staticData.failedAttempts[phone] = (staticData.failedAttempts[phone] || 0) + 1;\n  const tooManyAttempts = staticData.failedAttempts[phone] >= 3;\n  return [\n    {\n      json: {\n        ...previous,\n        intent: tooManyAttempts ? 'handoff' : 'chat',\n        replyText: tooManyAttempts\n          ? 'Disculpa, no logro entender bien tu pedido. Ya avise a alguien del negocio para que te atienda en breve.'\n          : 'Disculpa, no entendi bien eso. Puedes repetir tu pedido con mas detalle?',\n        items: [],\n        reason: 'no_entendido'\n      }\n    }\n  ];\n}\n\n// Si el LLM resolvio bien la intencion, reinicia el contador de intentos fallidos.\nif (parsed.intent !== 'handoff') {\n  staticData.failedAttempts[phone] = 0;\n}\n\n// Conserva nombre/correo ya conocidos de turnos anteriores si el LLM no los repite ahora.\nconst profile = staticData.customerProfiles[phone] || { name: '', email: '' };\nconst customerName = (parsed.customerName || '').trim() || profile.name || '';\nconst customerEmail = (parsed.customerEmail || '').trim() || profile.email || '';\nstaticData.customerProfiles[phone] = { name: customerName, email: customerEmail };\n\n// Guarda la respuesta del bot en el historial de conversacion.\nstaticData.conversations = staticData.conversations || {};\nconst history = staticData.conversations[phone] || [];\nhistory.push({ role: 'bot', text: parsed.replyText, at: new Date().toISOString() });\nstaticData.conversations[phone] = history.slice(-12);\n\nreturn [\n  {\n    json: {\n      ...previous,\n      intent: parsed.intent,\n      replyText: parsed.replyText || '',\n      items: Array.isArray(parsed.items) ? parsed.items : [],\n      reason: parsed.reason || '',\n      customerName,\n      customerEmail\n    }\n  }\n];\n"
+      },
+      "id": "a1111111-0000-4000-8000-000000000020",
+      "name": "Parsear salida del LLM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        620,
+        20
+      ],
+      "notes": "Parsea el JSON devuelto por el AI Agent de forma tolerante a texto extra. Si no puede parsear un JSON valido, cuenta el intento fallido en memoria y, al tercer intento, fuerza intent=handoff en vez de insistir indefinidamente."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "c1111111-0000-4000-8000-000000000021",
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "order",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "order"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "c1111111-0000-4000-8000-000000000022",
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "handoff",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "handoff"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "c1111111-0000-4000-8000-000000000023",
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "chat",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "chat"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000024",
+      "name": "Switch segun intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        860,
+        20
+      ],
+      "notes": "Distribuye el flujo segun el intent devuelto por el LLM: order -> crear pedido, handoff -> escalar a humano, chat -> responder directo. La salida 'extra' (fallback) cubre cualquier valor inesperado y se trata igual que handoff por seguridad."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lxurfpnlvmrvarwbzygl.supabase.co/rest/v1/rpc/bot_upsert_customer",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "sb_publishable_77PigSkBunzibgJZ08L-LA_aM6Xwjm_"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer sb_publishable_77PigSkBunzibgJZ08L-LA_aM6Xwjm_"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"p_phone_number_id\": $json.phoneNumberId, \"p_full_name\": $json.customerName, \"p_email\": $json.customerEmail } }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000040",
+      "name": "Supabase: bot_upsert_customer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -300
+      ],
+      "continueOnFail": true,
+      "notes": "Busca o registra al cliente (por correo) en public.customers para este restaurante, usando el nombre/correo que el LLM ya extrajo de la conversacion. Falla (400) si el correo es invalido o si el bot no esta habilitado para este numero."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1111111-0000-4000-8000-000000000041",
+              "leftValue": "={{$json.customerId}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1111111-0000-4000-8000-000000000042",
+      "name": "Cliente identificado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -300
+      ],
+      "notes": "bot_upsert_customer devuelve 400 si el correo no es valido. Sin un customerId no se debe crear la orden -- se le pide al cliente que confirme su nombre/correo en vez de continuar."
+    },
+    {
+      "parameters": {
+        "jsCode": "// bot_upsert_customer fallo (correo invalido, o el LLM aun no lo tiene). Se le pide\n// al cliente que confirme nombre y correo antes de poder registrar el pedido.\nconst combined = $('Parsear salida del LLM').first().json;\n\nreturn [\n  {\n    json: {\n      phoneNumberId: combined.phoneNumberId,\n      customerPhone: combined.customerPhone,\n      replyText: 'No pude registrar tus datos de contacto. Puedes confirmarme de nuevo tu nombre completo y un correo electronico valido?'\n    }\n  }\n];\n"
+      },
+      "id": "a1111111-0000-4000-8000-000000000043",
+      "name": "Armar mensaje de error en cliente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -380
+      ],
+      "notes": "Mensaje generico cuando no se pudo identificar/registrar al cliente, sin exponer el mensaje tecnico de PostgREST."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lxurfpnlvmrvarwbzygl.supabase.co/rest/v1/rpc/bot_create_order",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "sb_publishable_77PigSkBunzibgJZ08L-LA_aM6Xwjm_"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer sb_publishable_77PigSkBunzibgJZ08L-LA_aM6Xwjm_"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"p_phone_number_id\": $('Parsear salida del LLM').first().json.phoneNumberId, \"p_customer_phone\": $('Parsear salida del LLM').first().json.customerPhone, \"p_customer_name\": $('Parsear salida del LLM').first().json.customerName || null, \"p_items\": $('Parsear salida del LLM').first().json.items, \"p_customer_id\": $json.customerId } }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000025",
+      "name": "Supabase: bot_create_order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -180
+      ],
+      "continueOnFail": true,
+      "notes": "Registra el pedido con los productId reales resueltos por el LLM. 'neverError' + Continue On Fail evitan que un 400 (producto invalido, items vacios, etc.) rompa el workflow; el siguiente IF distingue exito vs error por la presencia de orderId."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1111111-0000-4000-8000-000000000026",
+              "leftValue": "={{$json.orderId}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1111111-0000-4000-8000-000000000027",
+      "name": "Orden creada con exito?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -180
+      ],
+      "notes": "bot_create_order devuelve 400 con {message} si el pedido es invalido (producto inexistente, items vacios, etc). Si no hay orderId, se trata como error y se le pide al cliente aclarar el pedido en vez de crashear el flujo."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1111111-0000-4000-8000-000000000028",
+              "leftValue": "={{$json.notificationEmail || $('Combinar menu + mensaje').first().json.restaurant.notificationEmail}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1111111-0000-4000-8000-000000000029",
+      "name": "Hay email de notificacion?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -260
+      ],
+      "notes": "Usa notificationEmail de bot_create_order, o como fallback el de bot_get_menu.restaurant. Si ninguno existe, se omite la notificacion por correo (la orden ya quedo registrada igual)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lxurfpnlvmrvarwbzygl.supabase.co/functions/v1/notify-new-order",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "sb_publishable_77PigSkBunzibgJZ08L-LA_aM6Xwjm_"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer sb_publishable_77PigSkBunzibgJZ08L-LA_aM6Xwjm_"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const combined = $('Combinar menu + mensaje').first().json; const order = $('Supabase: bot_create_order').first().json; const productsById = Object.fromEntries((combined.products || []).map((p) => [p.id, p])); const items = (combined.items || []).map((it) => ({ name: productsById[it.productId]?.name || 'Producto', quantity: it.quantity })); return { to: order.notificationEmail || combined.restaurant.notificationEmail, restaurantName: combined.restaurant.name, orderNumber: order.orderNumber, customerName: combined.customerName || 'Cliente WhatsApp', customerPhone: combined.customerPhone, items, total: order.total, currencyCode: 'DOP', currencyLocale: 'es-DO' }; })() }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000030",
+      "name": "Edge Function: notify-new-order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        -340
+      ],
+      "continueOnFail": true,
+      "notes": "Notifica al negocio por email del nuevo pedido. No es critico: con Continue On Fail, si Resend falla o no hay RESEND_API_KEY configurado, el pedido ya registrado en bot_create_order no se ve afectado."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Arma el texto de confirmacion de pedido para el cliente, usando los nombres reales\n// del catalogo (no los que escribio el cliente) y el total/numero de orden devueltos por bot_create_order.\nconst combined = $('Combinar menu + mensaje').first().json;\nconst order = $('Supabase: bot_create_order').first().json;\nconst productsById = Object.fromEntries((combined.products || []).map((p) => [p.id, p]));\n\nconst itemLines = (combined.items || [])\n  .map((it) => `- ${it.quantity} x ${productsById[it.productId]?.name || 'producto'}`)\n  .join('\\n');\n\nconst total = new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP', minimumFractionDigits: 2 }).format(order.total || 0);\n\nconst replyText = `Listo! Tu pedido ${order.orderNumber} quedo registrado:\\n${itemLines}\\n\\nTotal: ${total}\\n\\nGracias por tu compra en ${combined.restaurant.name}.`;\n\nreturn [\n  {\n    json: {\n      phoneNumberId: combined.phoneNumberId,\n      customerPhone: combined.customerPhone,\n      replyText\n    }\n  }\n];\n"
+      },
+      "id": "a1111111-0000-4000-8000-000000000031",
+      "name": "Armar confirmacion de pedido",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        -340
+      ],
+      "notes": "Genera el mensaje final de confirmacion con el numero de orden, el detalle de items (nombres reales del catalogo) y el total formateado en pesos dominicanos."
+    },
+    {
+      "parameters": {
+        "jsCode": "// bot_create_order fallo (400). Se le responde al cliente algo amable pidiendole\n// que aclare el pedido, sin exponer detalles tecnicos del error.\nconst combined = $('Combinar menu + mensaje').first().json;\n\nreturn [\n  {\n    json: {\n      phoneNumberId: combined.phoneNumberId,\n      customerPhone: combined.customerPhone,\n      replyText: 'No pude registrar tu pedido tal como lo escribiste. Puedes confirmarme de nuevo, uno por uno, los productos y cantidades que deseas?'\n    }\n  }\n];\n"
+      },
+      "id": "a1111111-0000-4000-8000-000000000032",
+      "name": "Armar mensaje de error en pedido",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -40
+      ],
+      "notes": "Mensaje generico y amable cuando bot_create_order devuelve error (producto invalido, items vacios, etc). No expone el mensaje tecnico de PostgREST al cliente final."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lxurfpnlvmrvarwbzygl.supabase.co/rest/v1/rpc/bot_create_handoff",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "sb_publishable_77PigSkBunzibgJZ08L-LA_aM6Xwjm_"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer sb_publishable_77PigSkBunzibgJZ08L-LA_aM6Xwjm_"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"p_phone_number_id\": $json.phoneNumberId, \"p_customer_phone\": $json.customerPhone, \"p_customer_name\": $json.customerName || null, \"p_reason\": $json.reason || 'no_entendido', \"p_message_excerpt\": $json.messageText } }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000033",
+      "name": "Supabase: bot_create_handoff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        180
+      ],
+      "continueOnFail": true,
+      "notes": "Registra el escalamiento a un humano (no_entendido, cliente_pidio_humano o producto_no_encontrado) junto con el ultimo mensaje del cliente, para que el staff del restaurante le de seguimiento desde el panel."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mensaje al cliente avisando que pronto lo atendera una persona del negocio.\nconst combined = $('Combinar menu + mensaje').first().json;\n\nreturn [\n  {\n    json: {\n      phoneNumberId: combined.phoneNumberId,\n      customerPhone: combined.customerPhone,\n      replyText: 'Entendido. En breve alguien de nuestro equipo te va a contactar para ayudarte directamente. Gracias por tu paciencia!'\n    }\n  }\n];\n"
+      },
+      "id": "a1111111-0000-4000-8000-000000000034",
+      "name": "Armar mensaje de handoff",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        180
+      ],
+      "notes": "Texto fijo que se le envia al cliente cuando se crea un handoff, para que sepa que un humano va a continuar la conversacion en vez de seguir insistiendo con el bot."
+    },
+    {
+      "parameters": {
+        "jsCode": "// intent = 'chat': se responde directo con el replyText que arma el LLM\n// (pregunta de aclaracion, respuesta a una duda del menu/horario, etc.), sin tocar la base de datos.\nconst data = $input.first().json;\n\nreturn [\n  {\n    json: {\n      phoneNumberId: data.phoneNumberId,\n      customerPhone: data.customerPhone,\n      replyText: data.replyText\n    }\n  }\n];\n"
+      },
+      "id": "a1111111-0000-4000-8000-000000000035",
+      "name": "Preparar respuesta de chat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        420
+      ],
+      "notes": "Para preguntas simples (menu, horario, direccion) o pedidos de aclaracion (falta cantidad), el bot responde directo con el texto que ya genero el LLM, sin llamar a Supabase."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{$json.phoneNumberId}}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer PEGA_AQUI_TU_TOKEN_DE_META"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"messaging_product\": \"whatsapp\", \"to\": $json.customerPhone, \"type\": \"text\", \"text\": { \"body\": $json.replyText } } }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000036",
+      "name": "WhatsApp: enviar confirmacion de pedido",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        -340
+      ],
+      "continueOnFail": true,
+      "notes": "Envia al cliente la confirmacion del pedido (numero de orden + total) usando la Cloud API de Meta."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{$json.phoneNumberId}}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer PEGA_AQUI_TU_TOKEN_DE_META"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"messaging_product\": \"whatsapp\", \"to\": $json.customerPhone, \"type\": \"text\", \"text\": { \"body\": $json.replyText } } }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000037",
+      "name": "WhatsApp: enviar aclaracion de error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        -40
+      ],
+      "continueOnFail": true,
+      "notes": "Envia el mensaje amable pidiendo aclarar el pedido cuando bot_create_order fallo."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{$json.phoneNumberId}}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer PEGA_AQUI_TU_TOKEN_DE_META"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"messaging_product\": \"whatsapp\", \"to\": $json.customerPhone, \"type\": \"text\", \"text\": { \"body\": $json.replyText } } }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000038",
+      "name": "WhatsApp: enviar aviso de handoff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        180
+      ],
+      "continueOnFail": true,
+      "notes": "Avisa al cliente que un humano del negocio va a continuar la conversacion."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{$json.phoneNumberId}}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer PEGA_AQUI_TU_TOKEN_DE_META"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"messaging_product\": \"whatsapp\", \"to\": $json.customerPhone, \"type\": \"text\", \"text\": { \"body\": $json.replyText } } }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1111111-0000-4000-8000-000000000039",
+      "name": "WhatsApp: responder chat directo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        420
+      ],
+      "continueOnFail": true,
+      "notes": "Responde preguntas simples (menu, horario, direccion) o pide la aclaracion (ej. cantidad faltante) generada por el LLM."
+    }
+  ],
+  "connections": {
+    "Webhook Meta (verificacion GET)": {
+      "main": [
+        [
+          {
+            "node": "Token valido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token valido?": {
+      "main": [
+        [
+          {
+            "node": "Responder challenge (200)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 403 (token invalido)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Meta (mensajes POST)": {
+      "main": [
+        [
+          {
+            "node": "Responder 200 vacio (ack inmediato)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extraer mensaje de texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer mensaje de texto": {
+      "main": [
+        [
+          {
+            "node": "Es mensaje de texto?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es mensaje de texto?": {
+      "main": [
+        [
+          {
+            "node": "Supabase: bot_get_menu",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Supabase: bot_get_menu": {
+      "main": [
+        [
+          {
+            "node": "Bot activo para este numero?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bot activo para este numero?": {
+      "main": [
+        [
+          {
+            "node": "Combinar menu + mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Combinar menu + mensaje": {
+      "main": [
+        [
+          {
+            "node": "Memoria por telefono (leer)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memoria por telefono (leer)": {
+      "main": [
+        [
+          {
+            "node": "Construir system prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir system prompt": {
+      "main": [
+        [
+          {
+            "node": "AI Agent (interpreta pedido)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent (interpreta pedido)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent (interpreta pedido)": {
+      "main": [
+        [
+          {
+            "node": "Parsear salida del LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear salida del LLM": {
+      "main": [
+        [
+          {
+            "node": "Switch segun intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch segun intent": {
+      "main": [
+        [
+          {
+            "node": "Supabase: bot_upsert_customer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Supabase: bot_create_handoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar respuesta de chat",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Supabase: bot_create_handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: bot_upsert_customer": {
+      "main": [
+        [
+          {
+            "node": "Cliente identificado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cliente identificado?": {
+      "main": [
+        [
+          {
+            "node": "Supabase: bot_create_order",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Armar mensaje de error en cliente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar mensaje de error en cliente": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp: enviar aclaracion de error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: bot_create_order": {
+      "main": [
+        [
+          {
+            "node": "Orden creada con exito?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Orden creada con exito?": {
+      "main": [
+        [
+          {
+            "node": "Hay email de notificacion?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Armar mensaje de error en pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay email de notificacion?": {
+      "main": [
+        [
+          {
+            "node": "Edge Function: notify-new-order",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Armar confirmacion de pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edge Function: notify-new-order": {
+      "main": [
+        [
+          {
+            "node": "Armar confirmacion de pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar confirmacion de pedido": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp: enviar confirmacion de pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar mensaje de error en pedido": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp: enviar aclaracion de error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: bot_create_handoff": {
+      "main": [
+        [
+          {
+            "node": "Armar mensaje de handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar mensaje de handoff": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp: enviar aviso de handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar respuesta de chat": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp: responder chat directo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "id": "whatsapp-order-bot",
+  "tags": []
+}
