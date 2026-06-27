@@ -10,8 +10,13 @@
 // This function must be deployed with --no-verify-jwt: the Authorization header
 // here carries the restaurant's own voice api_key, not a Supabase JWT.
 
+// Browsers aren't the real caller here (a voice platform's server is), so CORS
+// doesn't gate much in practice -- this only exists to match the other two
+// functions' pattern instead of leaving a stray hardcoded "*".
+import { checkRateLimit } from "../_shared/rateLimit.ts";
+
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": Deno.env.get("ALLOWED_ORIGINS") ?? "*",
   "Access-Control-Allow-Headers": "authorization, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
@@ -63,6 +68,11 @@ Deno.serve(async (request) => {
     const apiKey = (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
     if (!apiKey) {
       return fail("Falta el header Authorization: Bearer <api_key_del_restaurante>.");
+    }
+
+    const withinLimit = await checkRateLimit(`voice-order-webhook:${apiKey}`, 15);
+    if (!withinLimit) {
+      return fail("Demasiadas solicitudes, intenta de nuevo en un momento.");
     }
 
     let payload: VoiceOrderPayload;

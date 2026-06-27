@@ -8,6 +8,7 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (id.includes("node_modules/@supabase")) return "vendor-supabase";
+          if (id.includes("node_modules/@tanstack")) return "vendor-query";
           if (id.includes("node_modules/react")) return "vendor-react";
           return undefined;
         },

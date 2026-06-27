@@ -4765,3 +4765,14 @@ input[type="file"]::file-selector-button:hover {
   }
 }
 
+.admin-table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 14px;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+

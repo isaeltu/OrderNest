@@ -1,3 +1,5 @@
+import { checkRateLimit } from "../_shared/rateLimit.ts";
+
 type NotifyOrderItem = {
   name: string;
   quantity: number;
@@ -20,6 +22,32 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+function validateNotifyPayload(payload: NotifyOrderPayload): string | null {
+  if (typeof payload.to !== "string" || !EMAIL_PATTERN.test(payload.to)) {
+    return "El correo destinatario (to) no es valido.";
+  }
+  if (typeof payload.orderNumber !== "string" || payload.orderNumber.length > 50) {
+    return "orderNumber invalido.";
+  }
+  if (typeof payload.total !== "number" || !Number.isFinite(payload.total) || payload.total < 0) {
+    return "total invalido.";
+  }
+  if (!Array.isArray(payload.items) || payload.items.length > 200) {
+    return "items invalido.";
+  }
+  for (const item of payload.items) {
+    if (typeof item.name !== "string" || item.name.length === 0 || item.name.length > 200) {
+      return "Un item del pedido tiene un nombre invalido.";
+    }
+    if (typeof item.quantity !== "number" || !Number.isFinite(item.quantity) || item.quantity <= 0) {
+      return "Un item del pedido tiene una cantidad invalida.";
+    }
+  }
+  return null;
+}
 
 function escapeHtml(value: unknown) {
   return String(value ?? "")
@@ -135,6 +163,22 @@ Deno.serve(async (request) => {
   if (!payload.to || !payload.orderNumber || !payload.items?.length) {
     return new Response(JSON.stringify({ error: "Missing order data" }), {
       status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const validationError = validateNotifyPayload(payload);
+  if (validationError) {
+    return new Response(JSON.stringify({ error: validationError }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const withinLimit = await checkRateLimit(`notify-new-order:${payload.to}`, 20);
+  if (!withinLimit) {
+    return new Response(JSON.stringify({ error: "Demasiadas solicitudes, intenta de nuevo en un momento." }), {
+      status: 429,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

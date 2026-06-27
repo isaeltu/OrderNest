@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   categories as initialCategories,
   coupons,
@@ -741,7 +742,7 @@ function App() {
   const [categories, setCategories] = useState<Category[]>(initialCategories);
   const [catalogProducts, setCatalogProducts] = useState<Product[]>(products);
   const [availableCoupons, setAvailableCoupons] = useState<Coupon[]>(coupons);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customersEnabled, setCustomersEnabled] = useState(false);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [selectedTableId, setSelectedTableId] = useState("table-5");
@@ -775,14 +776,31 @@ function App() {
     [appliedCoupon, businessSettings.taxes, cart, catalogProducts],
   );
 
+  // TanStack Query pilot: customers used to be a plain useState refreshed by
+  // hand from 3 different call sites (cashier bootstrap, page-nav lazy load,
+  // post-mutation refresh). Those call sites are unchanged below, but they
+  // now just flip `customersEnabled`/invalidate instead of fetching+setState
+  // themselves -- staleTime/gcTime and request dedupe come from the query
+  // client config in main.tsx. This is the reference pattern for migrating
+  // tables/orders/reservations/inventory/staff next (see plan follow-ups).
+  const queryClient = useQueryClient();
+  const customersQuery = useQuery({
+    queryKey: ["customers"],
+    queryFn: () => fetchCustomers(true),
+    enabled: isSupabaseConfigured && !!currentUser && customersEnabled,
+  });
+  const customers = customersQuery.data ?? [];
+
+  useEffect(() => {
+    if (customersQuery.error) {
+      setDataError(customersQuery.error instanceof Error ? customersQuery.error.message : "No se pudieron cargar los clientes.");
+    }
+  }, [customersQuery.error]);
+
   async function refreshCustomersData() {
     if (!isSupabaseConfigured || !currentUser) return;
-    try {
-      setCustomers(await fetchCustomers(true));
-    } catch (error) {
-      loadedAdminSections.current.delete("customers");
-      setDataError(error instanceof Error ? error.message : "No se pudieron cargar los clientes.");
-    }
+    setCustomersEnabled(true);
+    await queryClient.invalidateQueries({ queryKey: ["customers"] });
   }
 
   async function refreshReservationsData() {
@@ -836,19 +854,16 @@ function App() {
     suppressRealtimeEcho = false,
   }: { includeCustomers?: boolean; force?: boolean; suppressRealtimeEcho?: boolean } = {}) {
     if (!isSupabaseConfigured || !currentUser) return;
+    if (includeCustomers) setCustomersEnabled(true);
     if (suppressRealtimeEcho) lastOperationalWriteRefresh.current = Date.now();
     setIsLoadingData(true);
     try {
-      const [data, customerData] = await Promise.all([
-        fetchPosData(force),
-        includeCustomers ? fetchCustomers(force) : Promise.resolve<Customer[] | null>(null),
-      ]);
+      const data = await fetchPosData(force);
       setTables(data.tables);
       setCategories(data.categories);
       setCatalogProducts(data.products);
       setAvailableCoupons(data.coupons);
       setOrders(data.orders);
-      if (customerData) setCustomers(customerData);
       setSelectedTableId((current) => data.tables.some((table) => table.id === current) ? current : data.tables[0]?.id ?? "");
       setSelectedCategoryId((current) =>
         data.categories.some((category) => category.id === current) ? current : data.categories[0]?.id ?? "",
@@ -1305,7 +1320,7 @@ function App() {
       notes: input.notes,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
     };
-    setCustomers((items) =>
+    queryClient.setQueryData<Customer[]>(["customers"], (items = []) =>
       existing
         ? items.map((customer) => (customer.id === existing.id ? nextCustomer : customer))
         : [nextCustomer, ...items],
@@ -2074,7 +2089,7 @@ function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        {restaurant.logoUrl ? <img src={restaurant.logoUrl} alt={restaurant.name} /> : <span>{restaurant.name.slice(0, 1)}</span>}
+        {restaurant.logoUrl ? <img src={restaurant.logoUrl} alt={restaurant.name} width={40} height={40} /> : <span>{restaurant.name.slice(0, 1)}</span>}
         <div>
           <strong>{restaurant.name}</strong>
           <small>{user.title}</small>
@@ -2554,6 +2569,22 @@ function FloorPlanView({
   );
 }
 
+const ProductCard = memo(function ProductCard({ product, onSelect }: { product: Product; onSelect: (product: Product) => void }) {
+  return (
+    <button className="product-card" onClick={() => onSelect(product)}>
+      {product.imageUrl ? (
+        <img src={product.imageUrl} alt={product.name} width={86} height={86} loading="lazy" decoding="async" />
+      ) : (
+        <span className="product-image-placeholder">Foto</span>
+      )}
+      <strong>{product.name}</strong>
+      <small>{currency.format(product.price)}{product.saleUnit === "lb" ? " / lb" : ""}</small>
+      {product.saleUnit === "lb" && <em className="weight-badge">Por peso</em>}
+      <span>{product.minutes} min</span>
+    </button>
+  );
+});
+
 function PosPage({
   table,
   categories,
@@ -2588,10 +2619,22 @@ function PosPage({
   onSend: () => void;
 }) {
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 250);
   const [weightedProduct, setWeightedProduct] = useState<Product | null>(null);
-  const visibleProducts = products
-    .filter((product) => product.categoryId === selectedCategoryId)
-    .filter((product) => `${product.name} ${product.description}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const handleSelectProduct = useCallback(
+    (product: Product) => {
+      if (product.saleUnit === "lb") setWeightedProduct(product);
+      else onAddProduct(product);
+    },
+    [onAddProduct],
+  );
+  const visibleProducts = useMemo(
+    () =>
+      products
+        .filter((product) => product.categoryId === selectedCategoryId)
+        .filter((product) => `${product.name} ${product.description}`.toLowerCase().includes(debouncedSearch.trim().toLowerCase())),
+    [products, selectedCategoryId, debouncedSearch],
+  );
 
   return (
     <section className="pos-layout">
@@ -2621,21 +2664,7 @@ function PosPage({
         )}
         <div className="product-grid">
           {visibleProducts.map((product) => (
-            <button
-              className="product-card"
-              key={product.id}
-              onClick={() => product.saleUnit === "lb" ? setWeightedProduct(product) : onAddProduct(product)}
-            >
-              {product.imageUrl ? (
-                <img src={product.imageUrl} alt={product.name} loading="lazy" decoding="async" />
-              ) : (
-                <span className="product-image-placeholder">Foto</span>
-              )}
-              <strong>{product.name}</strong>
-              <small>{currency.format(product.price)}{product.saleUnit === "lb" ? " / lb" : ""}</small>
-              {product.saleUnit === "lb" && <em className="weight-badge">Por peso</em>}
-              <span>{product.minutes} min</span>
-            </button>
+            <ProductCard key={product.id} product={product} onSelect={handleSelectProduct} />
           ))}
         </div>
         {categories.length > 0 && visibleProducts.length === 0 && (
@@ -2806,6 +2835,12 @@ function OrderPanel({
   );
 }
 
+const KITCHEN_LANES: { status: OrderStatus; label: string; action?: OrderStatus; button?: string }[] = [
+  { status: "new", label: "Nuevos", action: "preparing", button: "Marcar en preparacion" },
+  { status: "preparing", label: "En preparacion", action: "ready", button: "Marcar como listo" },
+  { status: "ready", label: "Listos", action: "delivered", button: "Entregado" },
+];
+
 function KitchenPage({
   orders,
   products,
@@ -2815,11 +2850,7 @@ function KitchenPage({
   products: Product[];
   onStatus: (orderId: string, status: OrderStatus) => void;
 }) {
-  const lanes: { status: OrderStatus; label: string; action?: OrderStatus; button?: string }[] = [
-    { status: "new", label: "Nuevos", action: "preparing", button: "Marcar en preparacion" },
-    { status: "preparing", label: "En preparacion", action: "ready", button: "Marcar como listo" },
-    { status: "ready", label: "Listos", action: "delivered", button: "Entregado" },
-  ];
+  const lanes = KITCHEN_LANES;
 
   return (
     <section className="kds">
@@ -2849,6 +2880,17 @@ function KitchenPage({
   );
 }
 
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [value, delayMs]);
+
+  return debounced;
+}
+
 function useElapsedMinutes(isoTimestamp?: string): number | null {
   const [now, setNow] = useState(() => Date.now());
 
@@ -2863,7 +2905,7 @@ function useElapsedMinutes(isoTimestamp?: string): number | null {
   return Math.max(0, Math.floor(elapsedMs / 60_000));
 }
 
-function KitchenTicket({
+const KitchenTicket = memo(function KitchenTicket({
   order,
   products,
   lane,
@@ -2906,7 +2948,7 @@ function KitchenTicket({
       )}
     </article>
   );
-}
+});
 
 const RESERVATION_HOURS = Array.from({ length: 11 }, (_, index) => 10 + index);
 
@@ -3757,19 +3799,24 @@ function OrderHistoryPage({
 }) {
   const [statusFilter, setStatusFilter] = useState<"all" | OrderStatus>("all");
   const [search, setSearch] = useState("");
-  const filteredOrders = orders
-    .filter((order) => statusFilter === "all" || order.status === statusFilter)
-    .filter((order) => {
-      const term = search.trim().toLowerCase();
-      if (!term) return true;
-      return (
-        order.id.toLowerCase().includes(term) ||
-        (order.orderNumber?.toLowerCase().includes(term) ?? false) ||
-        String(order.tableNumber).includes(term) ||
-        order.waiter.toLowerCase().includes(term)
-      );
-    })
-    .slice(0, 80);
+  const debouncedSearch = useDebouncedValue(search, 250);
+  const filteredOrders = useMemo(
+    () =>
+      orders
+        .filter((order) => statusFilter === "all" || order.status === statusFilter)
+        .filter((order) => {
+          const term = debouncedSearch.trim().toLowerCase();
+          if (!term) return true;
+          return (
+            order.id.toLowerCase().includes(term) ||
+            (order.orderNumber?.toLowerCase().includes(term) ?? false) ||
+            String(order.tableNumber).includes(term) ||
+            order.waiter.toLowerCase().includes(term)
+          );
+        })
+        .slice(0, 80),
+    [orders, statusFilter, debouncedSearch],
+  );
 
   function orderTotals(order: Order) {
     return withConfiguredTaxBreakdown(
@@ -3911,12 +3958,23 @@ function InventoryPage({
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
 
-  const stockValue = inventory.reduce((sum, item) => sum + item.stockQuantity * item.unitCost, 0);
-  const productById = new Map(products.map((product) => [product.id, product]));
-  const enriched = inventory.map((item) => ({ item, product: productById.get(item.productId) }));
-  const lowStockCount = inventory.filter((item) => item.stockQuantity <= item.reorderLevel).length;
-  const activeCount = enriched.filter(({ product }) => product?.available).length;
-  const inactiveCount = enriched.filter(({ product }) => product && !product.available).length;
+  const stockValue = useMemo(
+    () => inventory.reduce((sum, item) => sum + item.stockQuantity * item.unitCost, 0),
+    [inventory],
+  );
+  const enriched = useMemo(() => {
+    const productById = new Map(products.map((product) => [product.id, product]));
+    return inventory.map((item) => ({ item, product: productById.get(item.productId) }));
+  }, [inventory, products]);
+  const lowStockCount = useMemo(
+    () => inventory.filter((item) => item.stockQuantity <= item.reorderLevel).length,
+    [inventory],
+  );
+  const activeCount = useMemo(() => enriched.filter(({ product }) => product?.available).length, [enriched]);
+  const inactiveCount = useMemo(
+    () => enriched.filter(({ product }) => product && !product.available).length,
+    [enriched],
+  );
 
   function resetFilters() {
     setStatusFilter("all");
@@ -3927,17 +3985,21 @@ function InventoryPage({
     setPriceMax("");
   }
 
-  const filtered = enriched.filter(({ item, product }) => {
-    if (statusFilter === "active" && !product?.available) return false;
-    if (statusFilter === "inactive" && product?.available) return false;
-    if (statusFilter === "low_stock" && item.stockQuantity > item.reorderLevel) return false;
-    if (categoryFilter !== "all" && product?.categoryId !== categoryFilter) return false;
-    if (saleUnitFilter !== "all" && (product?.saleUnit ?? "unit") !== saleUnitFilter) return false;
-    if (minQuantity && item.stockQuantity < Number(minQuantity)) return false;
-    if (priceMin && item.unitCost < Number(priceMin)) return false;
-    if (priceMax && item.unitCost > Number(priceMax)) return false;
-    return true;
-  });
+  const filtered = useMemo(
+    () =>
+      enriched.filter(({ item, product }) => {
+        if (statusFilter === "active" && !product?.available) return false;
+        if (statusFilter === "inactive" && product?.available) return false;
+        if (statusFilter === "low_stock" && item.stockQuantity > item.reorderLevel) return false;
+        if (categoryFilter !== "all" && product?.categoryId !== categoryFilter) return false;
+        if (saleUnitFilter !== "all" && (product?.saleUnit ?? "unit") !== saleUnitFilter) return false;
+        if (minQuantity && item.stockQuantity < Number(minQuantity)) return false;
+        if (priceMin && item.unitCost < Number(priceMin)) return false;
+        if (priceMax && item.unitCost > Number(priceMax)) return false;
+        return true;
+      }),
+    [enriched, statusFilter, categoryFilter, saleUnitFilter, minQuantity, priceMin, priceMax],
+  );
 
   return (
     <>
@@ -4148,7 +4210,7 @@ function CategoriesPage({
         onAction={() => setIsCreating(true)}
         headers={["Imagen", "Nombre", "Descripcion", "Estado", "Acciones"]}
         rows={categories.map((category) => [
-          <img className="thumb" src={category.imageUrl} alt={category.name} />,
+          <img className="thumb" src={category.imageUrl} alt={category.name} width={48} height={48} loading="lazy" decoding="async" />,
           category.name,
           category.description,
           <span className="pill green">Activa</span>,
@@ -4198,7 +4260,7 @@ function ProductsPage({
         onAction={() => setIsCreating(true)}
         headers={["Imagen", "Nombre", "Categoria", "Venta", "Precio", "Estado", "Acciones"]}
         rows={products.map((product) => [
-          product.imageUrl ? <img className="thumb" src={product.imageUrl} alt={product.name} loading="lazy" decoding="async" /> : <span className="thumb placeholder-thumb">Foto</span>,
+          product.imageUrl ? <img className="thumb" src={product.imageUrl} alt={product.name} width={48} height={48} loading="lazy" decoding="async" /> : <span className="thumb placeholder-thumb">Foto</span>,
           product.name,
           categories.find((category) => category.id === product.categoryId)?.name ?? "",
           product.saleUnit === "lb" ? "Por libra" : "Por unidad",
@@ -4375,8 +4437,9 @@ function CustomersPage({
 }) {
   const [selectedCustomerId, setSelectedCustomerId] = useState(customers[0]?.id ?? "");
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 250);
   const filteredCustomers = useMemo(() => customers.filter((customer) => {
-    const term = search.trim().toLowerCase();
+    const term = debouncedSearch.trim().toLowerCase();
     if (!term) return true;
     return (
       customer.fullName.toLowerCase().includes(term) ||
@@ -4385,7 +4448,7 @@ function CustomersPage({
       customer.address.toLowerCase().includes(term) ||
       customer.rnc.toLowerCase().includes(term)
     );
-  }), [customers, search]);
+  }), [customers, debouncedSearch]);
   const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId) ?? filteredCustomers[0] ?? customers[0];
   const customerOrders = selectedCustomer
     ? orders.filter(
@@ -5467,7 +5530,11 @@ function RestaurantsPage({
         onAction={() => setIsCreating(true)}
         headers={["Logo", "Nombre", "RNC", "Telefono", "Correo", "Estado"]}
         rows={restaurants.map((restaurant) => [
-          restaurant.logoUrl ? <img className="thumb" src={restaurant.logoUrl} alt={restaurant.name} /> : restaurant.name.slice(0, 1),
+          restaurant.logoUrl ? (
+            <img className="thumb" src={restaurant.logoUrl} alt={restaurant.name} width={48} height={48} loading="lazy" decoding="async" />
+          ) : (
+            restaurant.name.slice(0, 1)
+          ),
           restaurant.name,
           restaurant.rnc || "-",
           restaurant.phone || "-",
@@ -6041,7 +6108,7 @@ function MobileMenuDrawer({
       <aside className="mobile-menu-panel">
         <div className="mobile-menu-header">
           <div className="sidebar-brand">
-            {restaurant.logoUrl ? <img src={restaurant.logoUrl} alt={restaurant.name} /> : <span>{restaurant.name.slice(0, 1)}</span>}
+            {restaurant.logoUrl ? <img src={restaurant.logoUrl} alt={restaurant.name} width={40} height={40} /> : <span>{restaurant.name.slice(0, 1)}</span>}
             <div>
               <strong>{restaurant.name}</strong>
               <small>{user.title}</small>
@@ -6093,6 +6160,8 @@ function MobileMenuDrawer({
   );
 }
 
+const ADMIN_TABLE_PAGE_SIZE = 50;
+
 function AdminTable({
   title,
   action,
@@ -6106,6 +6175,14 @@ function AdminTable({
   headers: string[];
   rows: ReactNode[][];
 }) {
+  const [page, setPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(rows.length / ADMIN_TABLE_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleRows =
+    rows.length > ADMIN_TABLE_PAGE_SIZE
+      ? rows.slice(currentPage * ADMIN_TABLE_PAGE_SIZE, (currentPage + 1) * ADMIN_TABLE_PAGE_SIZE)
+      : rows;
+
   return (
     <section className="panel page-panel">
       <div className="admin-table-heading">
@@ -6125,7 +6202,7 @@ function AdminTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, index) => (
+            {visibleRows.map((row, index) => (
               <tr key={index}>
                 {row.map((cell, cellIndex) => (
                   <td key={cellIndex}>{cell}</td>
@@ -6136,6 +6213,17 @@ function AdminTable({
         </table>
       </div>
       {rows.length === 0 && <div className="empty-state">Todavia no hay registros. Usa la accion principal para crear el primero.</div>}
+      {rows.length > ADMIN_TABLE_PAGE_SIZE && (
+        <div className="admin-table-pagination">
+          <button className="secondary-button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>
+            Anterior
+          </button>
+          <span>Pagina {currentPage + 1} de {pageCount}</span>
+          <button className="secondary-button" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)}>
+            Siguiente
+          </button>
+        </div>
+      )}
     </section>
   );
 }

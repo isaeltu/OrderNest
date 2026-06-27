@@ -1,3 +1,5 @@
+import { checkRateLimit } from "../_shared/rateLimit.ts";
+
 type InvoiceItem = {
   name: string;
   quantity: number;
@@ -51,6 +53,32 @@ function escapeHtml(value: unknown) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+function validateInvoicePayload(payload: InvoicePayload): string | null {
+  if (typeof payload.to !== "string" || !EMAIL_PATTERN.test(payload.to)) {
+    return "El correo destinatario (to) no es valido.";
+  }
+  if (typeof payload.orderNumber !== "string" || payload.orderNumber.length > 50) {
+    return "orderNumber invalido.";
+  }
+  if (!payload.totals || typeof payload.totals.total !== "number" || !Number.isFinite(payload.totals.total)) {
+    return "totals invalido.";
+  }
+  if (!Array.isArray(payload.items) || payload.items.length > 200) {
+    return "items invalido.";
+  }
+  for (const item of payload.items) {
+    if (typeof item.name !== "string" || item.name.length === 0 || item.name.length > 200) {
+      return "Un item de la factura tiene un nombre invalido.";
+    }
+    if (typeof item.quantity !== "number" || !Number.isFinite(item.quantity) || item.quantity <= 0) {
+      return "Un item de la factura tiene una cantidad invalida.";
+    }
+  }
+  return null;
 }
 
 function money(value: number, payload: InvoicePayload) {
@@ -224,6 +252,22 @@ Deno.serve(async (request) => {
   if (!payload.to || !payload.orderNumber || !payload.items?.length) {
     return new Response(JSON.stringify({ error: "Missing invoice data" }), {
       status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const validationError = validateInvoicePayload(payload);
+  if (validationError) {
+    return new Response(JSON.stringify({ error: validationError }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const withinLimit = await checkRateLimit(`send-invoice-email:${payload.to}`, 15);
+  if (!withinLimit) {
+    return new Response(JSON.stringify({ error: "Demasiadas solicitudes, intenta de nuevo en un momento." }), {
+      status: 429,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
