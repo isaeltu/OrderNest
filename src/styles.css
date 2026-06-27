@@ -4051,6 +4051,22 @@ body,
   background: var(--surface);
 }
 
+.metric-card-trend {
+  display: flex;
+  height: 28px;
+  align-items: end;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.metric-card-trend i {
+  flex: 1;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: currentColor;
+  opacity: 0.55;
+}
+
 .metric-card.green { color: var(--ok); border-color: rgba(87, 201, 138, 0.35); }
 .metric-card.blue { color: var(--accent); border-color: rgba(240, 160, 196, 0.35); }
 .metric-card.orange { color: var(--warn); border-color: rgba(232, 177, 77, 0.35); }
@@ -4572,6 +4588,179 @@ body,
 
 @media (max-width: 900px) {
   .profile-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Login: centered single card (replaces the split two-column layout) */
+.login-shell {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.login-brand-centered h1 {
+  margin: 0;
+  color: var(--accent);
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+.login-card-shell {
+  width: min(100%, 460px);
+}
+
+.login-card.centered {
+  width: 100%;
+  margin: 0;
+  padding: 36px 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  text-align: center;
+}
+
+.login-card.centered h2 {
+  margin: 0 0 8px;
+}
+
+.login-card.centered > span {
+  margin-bottom: 26px;
+}
+
+.login-card.centered label {
+  text-align: left;
+}
+
+.primary-button.centered {
+  width: auto;
+  margin: 18px auto 0;
+  padding: 0 48px;
+}
+
+.login-back-link {
+  margin: 16px 0 0;
+  text-align: center;
+}
+
+.copyright.static {
+  position: static;
+  margin: 0;
+}
+
+/* Native file inputs: the browser's default button clashes with the dark
+   theme, so it's restyled via ::file-selector-button instead of left as-is. */
+input[type="file"] {
+  color: var(--ink-soft);
+}
+
+input[type="file"]::file-selector-button {
+  margin-right: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: var(--ink);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+input[type="file"]::file-selector-button:hover {
+  background: var(--surface-3);
+}
+
+/* Inventory filters sidebar */
+.inventory-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  margin-top: 18px;
+}
+
+.inventory-filters {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.inventory-filters h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.inventory-filters label {
+  display: grid;
+  gap: 6px;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.inventory-filters select,
+.inventory-filters input {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+.inventory-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.inventory-status-grid button {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  color: var(--ink-soft);
+  background: var(--surface-2);
+  text-align: left;
+}
+
+.inventory-status-grid button strong {
+  color: var(--ink);
+  font-size: 1.2rem;
+}
+
+.inventory-status-grid button.selected {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.inventory-status-grid button.selected span,
+.inventory-status-grid button.selected strong {
+  color: var(--accent-ink);
+}
+
+.inventory-price-range {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.secondary-button.full-width {
+  width: 100%;
+}
+
+.inventory-table-wrap {
+  min-width: 0;
+}
+
+@media (max-width: 1020px) {
+  .inventory-layout {
     grid-template-columns: 1fr;
   }
 }

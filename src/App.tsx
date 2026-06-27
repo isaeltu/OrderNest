@@ -1860,7 +1860,7 @@ function App() {
           <RestaurantsPage restaurants={registeredRestaurants} currentRestaurant={restaurantProfile} onCreate={addRestaurant} />
         )}
         {page === "inventory" && (
-          <InventoryPage inventory={inventory} products={catalogProducts} onSave={saveInventory} />
+          <InventoryPage inventory={inventory} products={catalogProducts} categories={categories} onSave={saveInventory} />
         )}
         {page === "finance" && (
           <FinancePage
@@ -1942,28 +1942,14 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, password: string) =
   const [isResetting, setIsResetting] = useState(false);
 
   return (
-    <main className="login-page">
-      <section className="login-visual">
-        <div className="brand-mark">
-          <div className="chef-icon"><AppIcon name="kitchen" /></div>
-          <h1>RestoPOS</h1>
-          <p>Gestion eficiente, operaciones que fluyen.</p>
-        </div>
-        <div className="login-product-preview" aria-hidden="true">
-          <div className="login-preview-header"><span /><strong>Operacion en tiempo real</strong><em>En linea</em></div>
-          <div className="login-preview-metrics">
-            <div><span>Ventas del dia</span><strong>RD$ 86,450</strong></div>
-            <div><span>Mesas activas</span><strong>18 / 32</strong></div>
-            <div><span>Ordenes en cocina</span><strong>12</strong></div>
-          </div>
-          <div className="login-preview-lines"><i /><i /><i /><i /><i /><i /></div>
-        </div>
-      </section>
-      <section className="login-panel">
-        <div className="language-pill">ES</div>
+    <main className="login-shell">
+      <div className="login-brand-centered">
+        <h1>RESTOPOS</h1>
+      </div>
+      <section className="login-card-shell">
         {view === "login" ? (
           <form
-            className="login-card"
+            className="login-card centered"
             onSubmit={async (event) => {
               event.preventDefault();
               setError("");
@@ -1977,15 +1963,14 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, password: string) =
               }
             }}
           >
-            <p className="eyebrow">Restaurant POS Pro</p>
-            <h2>Iniciar sesion</h2>
-            <span>Bienvenido de nuevo, ingresa tus credenciales.</span>
+            <h2>Login!</h2>
+            <span>Please enter your credentials below to continue</span>
             <label>
-              Correo electronico
+              Username
               <input value={email} onChange={(event) => setEmail(event.target.value)} />
             </label>
             <label>
-              Contrasena
+              Password
               <input
                 type="password"
                 value={password}
@@ -1995,7 +1980,7 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, password: string) =
             {error && <span className="error-text">{error}</span>}
             <div className="login-options">
               <label className="check-line">
-                <input type="checkbox" /> Recordarme
+                <input type="checkbox" /> Remember me
               </label>
               <button
                 type="button"
@@ -2007,11 +1992,11 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, password: string) =
                   setView("forgot");
                 }}
               >
-                Olvidaste tu contrasena?
+                Forgot Password?
               </button>
             </div>
-            <button className="primary-button" type="submit" disabled={isSubmitting}>
-              Iniciar sesion <span>→</span>
+            <button className="primary-button centered" type="submit" disabled={isSubmitting}>
+              Login
             </button>
             <div className="demo-users">
               {users.map((user) => (
@@ -2023,7 +2008,7 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, password: string) =
           </form>
         ) : (
           <form
-            className="login-card"
+            className="login-card centered"
             onSubmit={async (event) => {
               event.preventDefault();
               setResetError("");
@@ -2054,10 +2039,10 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, password: string) =
             </label>
             {resetError && <span className="error-text">{resetError}</span>}
             {resetMessage && <span className="success-text">{resetMessage}</span>}
-            <button className="primary-button" type="submit" disabled={isResetting}>
+            <button className="primary-button centered" type="submit" disabled={isResetting}>
               Submit Now
             </button>
-            <p style={{ textAlign: "center" }}>
+            <p className="login-back-link">
               Back to{" "}
               <button type="button" className="link-button" onClick={() => setView("login")}>
                 Login!
@@ -2065,8 +2050,8 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, password: string) =
             </p>
           </form>
         )}
-        <p className="copyright">© 2026 RestoPOS. Todos los derechos reservados.</p>
       </section>
+      <p className="copyright static">© 2026 RestoPOS. Todos los derechos reservados.</p>
     </main>
   );
 }
@@ -2280,14 +2265,15 @@ function Dashboard({
         <button className="primary-action" onClick={onNewOrder}>+ Nueva orden</button>
       </div>
       <div className="page-grid dashboard-metrics">
-      <MetricCard label="Ventas del dia" value={currency.format(revenue)} tone="green" />
-      <MetricCard label="Ordenes activas" value={String(openOrders.length)} tone="blue" />
+      <MetricCard label="Ventas del dia" value={currency.format(revenue)} tone="green" trend={recentPaidDays.map((day) => day.total)} />
+      <MetricCard label="Ordenes activas" value={String(openOrders.length)} tone="blue" trend={recentPaidDays.map((day) => day.total)} />
       <MetricCard
         label="Mesas ocupadas"
         value={`${occupiedTables} / ${tables.length}`}
         tone="orange"
+        trend={recentPaidDays.map((day) => day.total)}
       />
-      <MetricCard label={lowStock.length ? "Inventario bajo" : "Productos activos"} value={String(lowStock.length || productCount)} tone={lowStock.length ? "orange" : "purple"} />
+      <MetricCard label={lowStock.length ? "Inventario bajo" : "Productos activos"} value={String(lowStock.length || productCount)} tone={lowStock.length ? "orange" : "purple"} trend={recentPaidDays.map((day) => day.total)} />
       </div>
       <div className="dashboard-layout">
         <div className="panel dashboard-sales">
@@ -3903,50 +3889,143 @@ function OrderHistoryPage({
   );
 }
 
+type InventoryStatusFilter = "all" | "active" | "inactive" | "low_stock";
+
 function InventoryPage({
   inventory,
   products,
+  categories,
   onSave,
 }: {
   inventory: InventoryItem[];
   products: Product[];
+  categories: Category[];
   onSave: (input: InventoryInput) => Promise<void>;
 }) {
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<InventoryStatusFilter>("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [saleUnitFilter, setSaleUnitFilter] = useState("all");
+  const [minQuantity, setMinQuantity] = useState("");
+  const [priceMin, setPriceMin] = useState("");
+  const [priceMax, setPriceMax] = useState("");
+
   const stockValue = inventory.reduce((sum, item) => sum + item.stockQuantity * item.unitCost, 0);
-  const lowStock = inventory.filter((item) => item.stockQuantity <= item.reorderLevel).length;
+  const productById = new Map(products.map((product) => [product.id, product]));
+  const enriched = inventory.map((item) => ({ item, product: productById.get(item.productId) }));
+  const lowStockCount = inventory.filter((item) => item.stockQuantity <= item.reorderLevel).length;
+  const activeCount = enriched.filter(({ product }) => product?.available).length;
+  const inactiveCount = enriched.filter(({ product }) => product && !product.available).length;
+
+  function resetFilters() {
+    setStatusFilter("all");
+    setCategoryFilter("all");
+    setSaleUnitFilter("all");
+    setMinQuantity("");
+    setPriceMin("");
+    setPriceMax("");
+  }
+
+  const filtered = enriched.filter(({ item, product }) => {
+    if (statusFilter === "active" && !product?.available) return false;
+    if (statusFilter === "inactive" && product?.available) return false;
+    if (statusFilter === "low_stock" && item.stockQuantity > item.reorderLevel) return false;
+    if (categoryFilter !== "all" && product?.categoryId !== categoryFilter) return false;
+    if (saleUnitFilter !== "all" && (product?.saleUnit ?? "unit") !== saleUnitFilter) return false;
+    if (minQuantity && item.stockQuantity < Number(minQuantity)) return false;
+    if (priceMin && item.unitCost < Number(priceMin)) return false;
+    if (priceMax && item.unitCost > Number(priceMax)) return false;
+    return true;
+  });
 
   return (
     <>
       <div className="page-grid">
         <MetricCard label="Valor inventario" value={currency.format(stockValue)} tone="green" />
         <MetricCard label="Productos con stock" value={String(inventory.length)} tone="blue" />
-        <MetricCard label="Bajo reorden" value={String(lowStock)} tone="orange" />
+        <MetricCard label="Bajo reorden" value={String(lowStockCount)} tone="orange" />
         <MetricCard label="Catalogo activo" value={String(products.filter((product) => product.available).length)} tone="purple" />
       </div>
-      <AdminTable
-        title="Inventario de productos"
-        action="+ Ajustar producto"
-        onAction={() => setIsCreating(true)}
-        headers={["Producto", "Stock", "Reorden", "Costo", "Valor", "Proveedor", "Estado", "Acciones"]}
-        rows={inventory.map((item) => {
-          const saleUnit = products.find((product) => product.id === item.productId)?.saleUnit;
-          const unitLabel = saleUnit === "lb" ? " lb" : " uds";
-          return [
-            item.productName,
-            `${item.stockQuantity.toFixed(saleUnit === "lb" ? 3 : 0)}${unitLabel}`,
-            `${item.reorderLevel.toFixed(saleUnit === "lb" ? 3 : 0)}${unitLabel}`,
-            currency.format(item.unitCost),
-            currency.format(item.stockQuantity * item.unitCost),
-            item.supplierName || "-",
-            <span className={item.stockQuantity <= item.reorderLevel ? "pill orange" : "pill green"}>
-              {item.stockQuantity <= item.reorderLevel ? "Reponer" : "Disponible"}
-            </span>,
-            <ActionButtons onEdit={() => setEditingItem(item)} />,
-          ];
-        })}
-      />
+      <div className="inventory-layout">
+        <aside className="panel inventory-filters">
+          <h3>Estado del producto</h3>
+          <div className="inventory-status-grid">
+            <button className={statusFilter === "all" ? "selected" : ""} onClick={() => setStatusFilter("all")}>
+              <span>Todos</span>
+              <strong>{inventory.length}</strong>
+            </button>
+            <button className={statusFilter === "active" ? "selected" : ""} onClick={() => setStatusFilter("active")}>
+              <span>Activos</span>
+              <strong>{activeCount}</strong>
+            </button>
+            <button className={statusFilter === "inactive" ? "selected" : ""} onClick={() => setStatusFilter("inactive")}>
+              <span>Inactivos</span>
+              <strong>{inactiveCount}</strong>
+            </button>
+            <button className={statusFilter === "low_stock" ? "selected" : ""} onClick={() => setStatusFilter("low_stock")}>
+              <span>Bajo stock</span>
+              <strong>{lowStockCount}</strong>
+            </button>
+          </div>
+          <label>
+            Categoria
+            <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+              <option value="all">Todas</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>{category.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Unidad de venta
+            <select value={saleUnitFilter} onChange={(event) => setSaleUnitFilter(event.target.value)}>
+              <option value="all">Todas</option>
+              <option value="unit">Por unidad</option>
+              <option value="lb">Por libra</option>
+            </select>
+          </label>
+          <label>
+            Cantidad minima en stock
+            <input type="number" min="0" placeholder="0" value={minQuantity} onChange={(event) => setMinQuantity(event.target.value)} />
+          </label>
+          <div className="inventory-price-range">
+            <label>
+              Costo minimo
+              <input type="number" min="0" placeholder="0" value={priceMin} onChange={(event) => setPriceMin(event.target.value)} />
+            </label>
+            <label>
+              Costo maximo
+              <input type="number" min="0" placeholder="0" value={priceMax} onChange={(event) => setPriceMax(event.target.value)} />
+            </label>
+          </div>
+          <button className="secondary-button full-width" onClick={resetFilters}>Reset Filters</button>
+        </aside>
+        <div className="inventory-table-wrap">
+          <AdminTable
+            title="Inventario de productos"
+            action="+ Ajustar producto"
+            onAction={() => setIsCreating(true)}
+            headers={["Producto", "Stock", "Reorden", "Costo", "Valor", "Proveedor", "Estado", "Acciones"]}
+            rows={filtered.map(({ item, product }) => {
+              const saleUnit = product?.saleUnit;
+              const unitLabel = saleUnit === "lb" ? " lb" : " uds";
+              return [
+                item.productName,
+                `${item.stockQuantity.toFixed(saleUnit === "lb" ? 3 : 0)}${unitLabel}`,
+                `${item.reorderLevel.toFixed(saleUnit === "lb" ? 3 : 0)}${unitLabel}`,
+                currency.format(item.unitCost),
+                currency.format(item.stockQuantity * item.unitCost),
+                item.supplierName || "-",
+                <span className={item.stockQuantity <= item.reorderLevel ? "pill orange" : "pill green"}>
+                  {item.stockQuantity <= item.reorderLevel ? "Reponer" : "Disponible"}
+                </span>,
+                <ActionButtons onEdit={() => setEditingItem(item)} />,
+              ];
+            })}
+          />
+        </div>
+      </div>
       {(isCreating || editingItem) && (
         <InventoryFormModal
           item={editingItem}
@@ -5034,7 +5113,7 @@ function FormActions({ onClose, disabled = false }: { onClose: () => void; disab
       <button type="button" className="secondary-button" onClick={onClose}>
         Cancelar
       </button>
-      <button type="submit" className="success-button" disabled={disabled}>
+      <button type="submit" className="primary-action" disabled={disabled}>
         Guardar
       </button>
     </div>
@@ -5316,7 +5395,7 @@ function PaymentMethodChart({ values }: { values: ReportSummary["byPaymentMethod
   const max = Math.max(...methods.map(({ key }) => values[key]), 1);
   const total = methods.reduce((sum, { key }) => sum + values[key], 0);
   let cursor = 0;
-  const colors = ["#2b59d9", "#3f7d4e", "#b9791f", "#6e5430"];
+  const colors = ["#f0a0c4", "#57c98a", "#e8b14d", "#8d8af0"];
   const segments = methods.map(({ key }, index) => {
     const start = cursor;
     cursor += total ? (values[key] / total) * 100 : 0;
@@ -5325,7 +5404,7 @@ function PaymentMethodChart({ values }: { values: ReportSummary["byPaymentMethod
 
   return (
     <div className="payment-chart" aria-label="Comparacion de ventas por metodo de pago">
-      <div className="payment-donut" style={{ background: total ? `conic-gradient(${segments})` : "#eef2fb" }} aria-hidden="true">
+      <div className="payment-donut" style={{ background: total ? `conic-gradient(${segments})` : "var(--surface-2)" }} aria-hidden="true">
         <span><small>Total</small><strong>{currency.format(total)}</strong></span>
       </div>
       <div className="payment-chart-legend">
@@ -5642,7 +5721,7 @@ function SettingsPage({
           </div>
           <div className="form-actions full-span">
             {savedMessage && <span className="success-text">{savedMessage}</span>}
-            <button type="submit" className="success-button">
+            <button type="submit" className="primary-action">
               Guardar negocio
             </button>
           </div>
@@ -5775,7 +5854,7 @@ function SettingsPage({
           </div>
           <div className="form-actions full-span">
             {savedMessage && <span className="success-text">{savedMessage}</span>}
-            <button type="submit" className="success-button">
+            <button type="submit" className="primary-action">
               Guardar
             </button>
           </div>
@@ -5833,7 +5912,7 @@ function SettingsPage({
           </small>
           <div className="form-actions full-span">
             {botSavedMessage && <span className="success-text">{botSavedMessage}</span>}
-            <button type="submit" className="success-button">
+            <button type="submit" className="primary-action">
               Guardar bot
             </button>
           </div>
@@ -5904,7 +5983,7 @@ function SettingsPage({
           </small>
           <div className="form-actions full-span">
             {voiceSavedMessage && <span className="success-text">{voiceSavedMessage}</span>}
-            <button type="submit" className="success-button">
+            <button type="submit" className="primary-action">
               Guardar bot de voz
             </button>
           </div>
@@ -6122,11 +6201,29 @@ function PanelHeader({ title, action, onAction }: { title: string; action?: stri
   );
 }
 
-function MetricCard({ label, value, tone }: { label: string; value: string; tone: string }) {
+function MetricCard({
+  label,
+  value,
+  tone,
+  trend,
+}: {
+  label: string;
+  value: string;
+  tone: string;
+  trend?: number[];
+}) {
+  const maxTrend = trend && trend.length ? Math.max(...trend, 1) : 1;
   return (
     <article className={`metric-card ${tone}`}>
       <span>{label}</span>
       <strong>{value}</strong>
+      {trend && (
+        <div className="metric-card-trend">
+          {trend.map((point, index) => (
+            <i key={index} style={{ height: `${Math.max((point / maxTrend) * 100, 8)}%` }} />
+          ))}
+        </div>
+      )}
     </article>
   );
 }
